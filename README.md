@@ -25,13 +25,13 @@ Built for developers, agencies, and privacy-sensitive businesses. **MIT Licensed
 docker run -p 3000:3000 \
   -e SENDGATE_API_KEY=your_secret_key \
   -e APP_BASE_URL=http://localhost:3000 \
-  ghcr.io/your-username/sendgate:latest
+  ghcr.io/igorfilippov3/sendgate:latest
 ```
 
 ### 2. Manual Setup
 
 ```bash
-git clone https://github.com/your-repo/sendgate.git
+git clone https://github.com/IgorFilippov3/sendgate.git
 cd sendgate
 npm install
 npm run build

@@ -46,7 +46,7 @@ export default async function Navbar() {
                 API
               </Link>
               <a
-                href="https://github.com/your-repo/sendgate"
+                href="https://github.com/IgorFilippov3/sendgate"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn btn-primary btn-sm rounded-xl px-6 font-black text-white shadow-lg shadow-primary/20 normal-case border-none flex items-center gap-2"

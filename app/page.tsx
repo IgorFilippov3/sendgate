@@ -30,7 +30,7 @@ export default async function Home() {
                   Explore API Docs
                 </Link>
                 <a
-                  href="https://github.com/your-repo/sendgate"
+                  href="https://github.com/IgorFilippov3/sendgate"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="btn btn-ghost btn-lg rounded-xl px-10 font-bold normal-case transition-all flex items-center gap-2"
