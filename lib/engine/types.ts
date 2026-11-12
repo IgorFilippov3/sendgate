@@ -1,132 +1,188 @@
 /**
- * Represents the overall risk assessment level for an email or domain.
+ * Public result model of the verification engine.
+ *
+ * The central idea: a verdict is about the address, and "we could not check"
+ * (unknown) is kept separate from "we checked and it is bad" (undeliverable).
  */
-export type RiskLevel = "safe" | "risky" | "dangerous";
 
-/**
- * Result of an analysis category (e.g., authentication, infrastructure).
- */
-export interface CategoryResult {
-  /** Numerical score for the category (0-100) */
-  score: number;
-  /** Pass/warn/fail status based on the score and findings */
-  status: "pass" | "warn" | "fail";
-  /** List of specific observations or issues found */
-  findings: string[];
+export type Verdict = "deliverable" | "risky" | "undeliverable" | "unknown";
+
+export type Severity = "info" | "warning" | "critical";
+
+export type ReasonCode =
+  // Syntax
+  | "INVALID_SYNTAX"
+  // Domain / DNS
+  | "DOMAIN_NOT_FOUND"
+  | "NO_MAIL_SERVER"
+  | "NULL_MX"
+  | "MX_NOT_ROUTABLE"
+  | "DNS_ERROR"
+  | "IMPLICIT_MX"
+  | "RESERVED_DOMAIN"
+  // Mailbox (SMTP)
+  | "MAILBOX_NOT_FOUND"
+  | "MAILBOX_FULL"
+  | "MAILBOX_DISABLED"
+  | "MAILBOX_ACCEPTED"
+  | "CATCH_ALL"
+  | "SMTP_TEMPORARY_FAILURE"
+  | "SMTP_BLOCKED"
+  | "SMTP_UNREACHABLE"
+  | "SMTP_NOT_VERIFIED"
+  | "PROVIDER_ACCEPTS_ALL"
+  // Address heuristics
+  | "DISPOSABLE"
+  | "ROLE_ACCOUNT"
+  | "NO_REPLY_ADDRESS"
+  | "PLACEHOLDER_ADDRESS"
+  | "TYPO_SUSPECTED"
+  | "FREE_PROVIDER"
+  // Reputation
+  | "DOMAIN_BLOCKLISTED"
+  | "MX_IP_BLOCKLISTED"
+  | "NEW_DOMAIN"
+  // Domain authentication (informational for recipients)
+  | "NO_SPF"
+  | "NO_DMARC";
+
+export interface Reason {
+  code: ReasonCode;
+  severity: Severity;
+  message: string;
 }
 
-/**
- * Comprehensive analysis result including scores, predictions, and recommendations.
- */
-export interface DetailedAnalysis {
-  /** Overall calculated score (0-100) */
-  score: number;
-  /** Letter grade based on the score (A-F) */
-  grade: "A" | "B" | "C" | "D" | "F";
-  /** Predictive metrics for deliverability */
-  predictions: {
-    /** Estimated probability of email bouncing */
-    expectedBounceRate: { min: number; max: number };
-    /** Potential impact on sender reputation */
-    reputationImpact: "low" | "medium" | "high" | "critical";
-  };
-  /** Breakdown of results by analysis category */
-  categories: {
-    /** SPF and DMARC verification */
-    auth: CategoryResult;
-    /** MX records and server configuration */
-    infrastructure: CategoryResult;
-    /** Blocklist status and domain age */
-    reputation: CategoryResult;
-    /** Disposable detection, role-based checks, and patterns */
-    behavioral: CategoryResult;
-  };
-  /** Actionable steps to improve deliverability */
-  recommendations: {
-    /** Description of the identified risk */
-    risk: string;
-    /** Suggested corrective action */
-    action: string;
-    /** Severity of the risk (e.g., Critical, High, Medium) */
-    impact: string;
-  }[];
+export type SyntaxCheck =
+  | {
+      valid: true;
+      local: string;
+      /** ASCII (punycode) form of the domain, lowercased. */
+      domain: string;
+    }
+  | { valid: false; error: string };
+
+export interface MailHost {
+  exchange: string;
+  priority: number;
+  addresses: string[];
 }
 
-/**
- * Results of SPF (Sender Policy Framework) record analysis.
- */
-export interface SpfResult {
-  /** Whether an SPF record was found */
-  exists: boolean;
-  /** The raw SPF record string */
+export type DomainStatus =
+  | "ok"
+  | "not_found"
+  | "no_mail"
+  | "null_mx"
+  | "not_routable"
+  | "dns_error";
+
+export interface DomainMailCheck {
+  status: DomainStatus;
+  /** True when no MX exists and the A/AAAA record is used (RFC 5321 §5.1). */
+  implicitMx: boolean;
+  hosts: MailHost[];
+  error?: string;
+}
+
+export interface SpfCheck {
+  status: "none" | "valid" | "permerror" | "error";
   record: string | null;
-  /** Number of DNS lookups required to evaluate the record */
   lookups: number;
-  /** Whether the policy is strictly enforced (-all) */
-  isStrict: boolean;
-  /** List of potential issues or warnings */
+  allQualifier: "+" | "-" | "~" | "?" | null;
   warnings: string[];
 }
 
-/**
- * Results of DMARC (Domain-based Message Authentication, Reporting, and Conformance) analysis.
- */
-export interface DmarcResult {
-  /** Whether a DMARC record was found */
-  exists: boolean;
-  /** The raw DMARC record string */
+export interface DmarcCheck {
+  status: "none" | "found" | "invalid" | "error";
   record: string | null;
-  /** Configured policy (none, quarantine, reject) */
-  policy: "none" | "quarantine" | "reject" | "unknown";
-  /** Alignment mode for SPF/DKIM */
-  alignment: "strict" | "relaxed";
+  policy: "none" | "quarantine" | "reject" | null;
+  subdomainPolicy: "none" | "quarantine" | "reject" | null;
 }
 
-/**
- * Results of MX (Mail Exchanger) record analysis.
- */
-export interface MxResult {
-  /** Whether valid MX records were found */
-  exists: boolean;
-  /** List of detected mail servers */
-  records: {
-    /** Hostname of the mail server */
-    exchange: string;
-    /** Priority level of the server */
-    priority: number;
-    /** Whether the server supports TLS encryption */
-    hasTls: boolean;
-    /** List of IP addresses associated with the exchange */
-    ipAddresses: string[];
-  }[];
+export type ListingStatus = "ok" | "partial" | "unavailable" | "skipped";
+
+export interface BlocklistCheck {
+  status: ListingStatus;
+  domainListings: string[];
+  ipListings: string[];
 }
 
-/**
- * Results of reputation and blocklist checks.
- */
-export interface ReputationResult {
-  /** Whether the domain or its IPs are blacklisted */
-  blacklisted: boolean;
-  /** List of specific blocklists where entries were found */
-  listings: string[];
-  /** Calculated age of the domain in days */
+export type SmtpStatus =
+  | "skipped"
+  | "accepted"
+  | "rejected"
+  | "full"
+  | "disabled"
+  | "temporary_failure"
+  | "blocked"
+  | "unreachable";
+
+export interface SmtpCheck {
+  status: SmtpStatus;
+  /** Why the probe was skipped, if it was. */
+  skipReason?:
+    | "disabled"
+    | "port_unavailable"
+    | "no_mail_server"
+    | "unreliable_provider"
+    | "non_ascii_address";
+  /** Basic reply code of the RCPT command. */
+  code?: number;
+  /** Enhanced status code, e.g. 5.1.1. */
+  enhancedCode?: string;
+  /** Server reply text, trimmed. */
+  message?: string;
+  mx?: string;
+  catchAll: boolean | null;
+  startTls: boolean | null;
+}
+
+export interface DomainAnalysis {
+  domain: string;
+  mail: DomainMailCheck;
+  spf: SpfCheck;
+  dmarc: DmarcCheck;
+  blocklists: BlocklistCheck;
   domainAgeDays: number | null;
+  disposable: boolean;
+  /** Matched by MX host rather than by domain name. */
+  disposableByMx: boolean;
+  freeProvider: boolean;
+  reserved: boolean;
+  typoSuggestion: string | null;
 }
 
-/**
- * Results of behavioral and pattern-based heuristics.
- */
-export interface BehavioralResult {
-  /** Whether the email is a role-based address (e.g., support@) */
-  isRoleBased: boolean;
-  /** Whether the domain belongs to a disposable email provider */
-  isDisposable: boolean;
-  /** Whether the domain appears to be a common typo */
-  isTypo: boolean;
-  /** Whether the email or domain is on a local blacklist */
-  isBlacklisted: boolean;
-  /** Whether the domain is configured as a catch-all */
-  isCatchAll: boolean;
-  /** Detailed findings from behavioral analysis */
-  details: string[];
+export interface EmailVerification {
+  /** Address as submitted, trimmed. */
+  input: string;
+  /** Lowercase address with ASCII domain, or null if syntax is invalid. */
+  email: string | null;
+  domain: string | null;
+  verdict: Verdict;
+  /** 0–100. Higher is safer to send. */
+  score: number;
+  reasons: Reason[];
+  /** "Did you mean" correction for likely typos. */
+  suggestion: string | null;
+  checks: {
+    syntax: SyntaxCheck;
+    roleAccount: boolean;
+    noReply: boolean;
+    placeholder: boolean;
+    smtp: SmtpCheck;
+    domain: DomainAnalysis | null;
+  };
+}
+
+export interface BatchSummary {
+  total: number;
+  unique: number;
+  duplicates: number;
+  invalid: number;
+  verdicts: Record<Verdict, number>;
+  reasons: Partial<Record<ReasonCode, number>>;
+}
+
+export interface BatchResult {
+  summary: BatchSummary;
+  results: EmailVerification[];
 }
