@@ -48,9 +48,9 @@ export default async function Home() {
             </div>
 
             <div className="flex flex-col gap-3 pt-4">
-              <TrustItem text="Passive infrastructure inspection: zero SMTP probes or recipient engagement" />
+              <TrustItem text="Never sends email: optional SMTP mailbox check stops before any message is sent" />
               <TrustItem text="Stateless architecture: data is processed in-memory and never persisted" />
-              <TrustItem text="Heuristic scoring: probabilistic assessment based on infrastructure signals" />
+              <TrustItem text="Honest verdicts: deliverable, risky, undeliverable, or unknown when a mailbox cannot be confirmed" />
             </div>
           </div>
 
@@ -71,16 +71,16 @@ export default async function Home() {
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
               <BenefitItem
-                title="Risk classification"
-                desc="Automated categorization based on DNS health, MX reputation, and behavioral heuristics."
+                title="Mailbox verification"
+                desc="Syntax, DNS and MX checks, plus optional SMTP verification that a mailbox exists, with catch-all detection."
               />
               <BenefitItem
-                title="Infrastructure telemetry"
-                desc="Deep inspection of SPF/DMARC policies and mail server delivery signals."
+                title="Explained results"
+                desc="Every verdict comes with machine-readable reason codes and a 0–100 score."
               />
               <BenefitItem
-                title="Anomaly detection"
-                desc="Identification of disposable providers, catch-alls, and misconfigured hosts."
+                title="Risk detection"
+                desc="10,000+ disposable domains, typo suggestions, role and no-reply addresses, domain blocklists and new domains."
               />
               <BenefitItem
                 title="Schema-aware export"

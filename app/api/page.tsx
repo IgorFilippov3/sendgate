@@ -37,7 +37,7 @@ export default async function ApiLandingPage() {
             <div className="flex flex-col gap-3 pt-4 border-t border-[#e1e7f5]">
               <TrustItem text="Standard REST API with Bearer auth" />
               <TrustItem text="Real-time technical & behavioral analysis" />
-              <TrustItem text="Zero-latency Sandbox mode for testing" />
+              <TrustItem text="Sandbox mode with deterministic results for testing" />
             </div>
           </div>
 
@@ -50,21 +50,25 @@ export default async function ApiLandingPage() {
             <div className="bg-[#1a1c1e] rounded-2xl border border-white/10 shadow-[0_20px_40px_rgba(0,0,0,0.2)] p-8 space-y-6">
               <pre className="text-xs font-mono leading-relaxed text-white/90 overflow-x-auto">
                 {`{
-  "email": "test@example.com",
-  "risk": "safe",
+  "input": "jane@acme.dev",
+  "email": "jane@acme.dev",
+  "domain": "acme.dev",
+  "verdict": "deliverable",
   "score": 95,
-  "details": {
-    "is_disposable": false,
-    "is_role_based": false,
-    "is_catch_all": false,
-    "has_mx": true,
-    "has_spf": true,
-    "has_dmarc": true
-  },
-  "findings": [
-    "Verified provider configuration",
-    "Standard shared infrastructure"
-  ]
+  "suggestion": null,
+  "reasons": [
+    {
+      "code": "MAILBOX_ACCEPTED",
+      "severity": "info",
+      "message": "The mail server accepted this recipient"
+    }
+  ],
+  "checks": {
+    "syntax": { "valid": true, ... },
+    "roleAccount": false,
+    "smtp": { "status": "accepted", "catchAll": false, ... },
+    "domain": { "mail": { "status": "ok", ... }, ... }
+  }
 }`}
               </pre>
               <div className="pt-4 border-t border-white/10 flex items-center justify-between">
@@ -88,16 +92,16 @@ export default async function ApiLandingPage() {
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
               <BenefitItem
-                title="Single Email Analysis"
-                desc="Real-time checks for registration forms and lead capture."
+                title="Single & batch verification"
+                desc="Real-time checks for signup forms, and batch checks for lists."
               />
               <BenefitItem
                 title="Sandbox Environment"
-                desc="Test your integration without performing actual DNS lookups."
+                desc="Test your integration without DNS or SMTP traffic: deliverable@, undeliverable@, full@ and greylisted@ return fixed results."
               />
               <BenefitItem
-                title="Deep Technical Scan"
-                desc="Full DNS, SPF, DMARC, and MX record assessment."
+                title="Mailbox checks"
+                desc="MX resolution, optional SMTP RCPT verification and catch-all detection."
               />
               <BenefitItem
                 title="Behavioral Detection"
@@ -134,14 +138,12 @@ export default async function ApiLandingPage() {
             </div>
 
             <div className="space-y-4">
-              <h3 className="text-xl font-bold">Analyze Single Email</h3>
+              <h3 className="text-xl font-bold">Verify an Email</h3>
               <div className="flex items-center gap-4">
                 <span className="bg-primary text-white text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-md">
                   POST
                 </span>
-                <code className="text-sm font-bold">
-                  /api/v1/analyze/single
-                </code>
+                <code className="text-sm font-bold">/api/v2/verify</code>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4">
@@ -151,7 +153,7 @@ export default async function ApiLandingPage() {
                   </p>
                   <pre className="bg-[#1a1c1e] text-white p-4 rounded-xl text-xs overflow-x-auto">
                     {`{
-  "email": "test@example.com",
+  "email": "jane@acme.dev",
   "sandbox": false
 }`}
                   </pre>
@@ -162,25 +164,73 @@ export default async function ApiLandingPage() {
                   </p>
                   <pre className="bg-[#1a1c1e] text-white p-4 rounded-xl text-xs overflow-x-auto">
                     {`{
-  "email": "test@example.com",
-  "risk": "safe",
+  "input": "jane@acme.dev",
+  "email": "jane@acme.dev",
+  "domain": "acme.dev",
+  "verdict": "deliverable",
   "score": 95,
-  "details": {
-    "is_disposable": false,
-    "is_role_based": false,
-    "is_catch_all": false,
-    "has_mx": true,
-    "has_spf": true,
-    "has_dmarc": true
-  },
-  "findings": [
-    "Verified provider configuration",
-    "Standard shared infrastructure"
-  ]
+  "suggestion": null,
+  "reasons": [
+    {
+      "code": "MAILBOX_ACCEPTED",
+      "severity": "info",
+      "message": "The mail server accepted this recipient"
+    }
+  ],
+  "checks": {
+    "syntax": { "valid": true, ... },
+    "roleAccount": false,
+    "smtp": { "status": "accepted", "catchAll": false, ... },
+    "domain": { "mail": { "status": "ok", ... }, ... }
+  }
 }`}
                   </pre>
                 </div>
               </div>
+            </div>
+
+            <div className="space-y-4 pt-8 border-t border-[#e1e7f5]">
+              <h3 className="text-xl font-bold">Verify a Batch</h3>
+              <div className="flex items-center gap-4">
+                <span className="bg-primary text-white text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-md">
+                  POST
+                </span>
+                <code className="text-sm font-bold">/api/v2/verify/batch</code>
+              </div>
+              <p className="text-[#44474e]">
+                Up to <code>MAX_BULK_EMAILS</code> addresses per request.
+                Duplicates are removed; each domain is checked once.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4">
+                <pre className="bg-[#1a1c1e] text-white p-4 rounded-xl text-xs overflow-x-auto">
+                  {`{
+  "emails": ["a@acme.dev", "b@acme.dev"],
+  "sandbox": false
+}`}
+                </pre>
+                <pre className="bg-[#1a1c1e] text-white p-4 rounded-xl text-xs overflow-x-auto">
+                  {`{
+  "summary": {
+    "total": 2, "unique": 2,
+    "duplicates": 0, "invalid": 0,
+    "verdicts": { "deliverable": 2, "risky": 0,
+                  "undeliverable": 0, "unknown": 0 },
+    "reasons": { "MAILBOX_ACCEPTED": 2 }
+  },
+  "results": [ ... ]
+}`}
+                </pre>
+              </div>
+            </div>
+
+            <div className="space-y-4 pt-8 border-t border-[#e1e7f5]">
+              <h3 className="text-xl font-bold">Verdicts</h3>
+              <ul className="text-[#44474e] space-y-2 text-sm">
+                <li><strong>deliverable</strong>: the mail server accepted the recipient and nothing else is wrong.</li>
+                <li><strong>risky</strong>: deliverable, but likely to hurt (disposable, catch-all, typo, blocklisted domain, no-reply).</li>
+                <li><strong>undeliverable</strong>: invalid syntax, missing domain or mail server, or the mailbox does not exist.</li>
+                <li><strong>unknown</strong>: nothing bad found, but the mailbox could not be confirmed (SMTP verification off, greylisting, provider that accepts everything).</li>
+              </ul>
             </div>
 
             <div className="space-y-4 pt-8 border-t border-[#e1e7f5]">
@@ -204,10 +254,14 @@ export default async function ApiLandingPage() {
                   <pre className="bg-[#1a1c1e] text-white p-4 rounded-xl text-xs overflow-x-auto">
                     {`{
   "status": "healthy",
-  "timestamp": "2026-02-05T12:00:00Z",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "uptime": 3600.5,
-  "env": "production"
+  "capabilities": {
+    "smtp": { "enabled": true, "available": true },
+    "disposableDomains": 10181,
+    "api": true,
+    "maxBulkEmails": 100
+  }
 }`}
                   </pre>
                 </div>

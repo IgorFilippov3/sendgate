@@ -1,36 +1,59 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Papa from "papaparse";
-import { actionAnalyzeSingle, actionAnalyzeBatch } from "@/lib/actions";
-import { AnalysisSummary, DomainAnalysis } from "@/lib/analysis-engine";
+import { actionLimits, actionVerifyBatch, actionVerifySingle } from "@/lib/actions";
+import type { BatchResult, EmailVerification, Verdict } from "@/lib/engine/types";
+
+const VERDICT_STYLE: Record<Verdict, { badge: string; label: string; bar: string }> = {
+  deliverable: { badge: "bg-green-100 text-green-700", label: "Deliverable", bar: "bg-green-500" },
+  risky: { badge: "bg-yellow-100 text-yellow-700", label: "Risky", bar: "bg-yellow-500" },
+  undeliverable: { badge: "bg-red-100 text-red-700", label: "Undeliverable", bar: "bg-red-500" },
+  unknown: { badge: "bg-slate-100 text-slate-600", label: "Unknown", bar: "bg-slate-400" },
+};
+
+const VERDICTS: Verdict[] = ["deliverable", "risky", "undeliverable", "unknown"];
+
+const SEVERITY_DOT = {
+  critical: "bg-red-500",
+  warning: "bg-yellow-500",
+  info: "bg-primary/40",
+} as const;
 
 export default function AnalysisTool() {
   const [activeTab, setActiveTab] = useState<"single" | "bulk">("single");
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<
-    (DomainAnalysis & { email: string }) | null
-  >(null);
+  const [result, setResult] = useState<EmailVerification | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [limit, setLimit] = useState<number | null>(null);
 
   const [file, setFile] = useState<File | null>(null);
-  const [batchResult, setBatchResult] = useState<AnalysisSummary | null>(null);
+  const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  const handleSingleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  useEffect(() => {
+    actionLimits().then((l) => setLimit(l.maxBulkEmails)).catch(() => {});
+  }, []);
+
+  const verifySingle = async (address: string) => {
     setLoading(true);
     setError(null);
     setResult(null);
-
-    const res = await actionAnalyzeSingle(email);
-    if (res.success && res.data) {
-      setResult(res.data);
-    } else {
-      setError(res.error || "Analysis failed");
-    }
+    const res = await actionVerifySingle(address);
+    if (res.success) setResult(res.data);
+    else setError(res.error);
     setLoading(false);
+  };
+
+  const handleSingleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await verifySingle(email);
+  };
+
+  const applySuggestion = async (suggestion: string) => {
+    setEmail(suggestion);
+    await verifySingle(suggestion);
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -54,21 +77,18 @@ export default function AnalysisTool() {
       complete: async (results) => {
         const emails = results.data
           .flat()
-          .map((e: unknown) => String(e).trim())
-          .filter((e) => e.includes("@"));
+          .map((cell: unknown) => String(cell).trim())
+          .filter((cell) => cell.includes("@"));
 
         if (emails.length === 0) {
-          setError("No valid emails found in CSV");
+          setError("No email addresses found in the CSV");
           setLoading(false);
           return;
         }
 
-        const res = await actionAnalyzeBatch(emails);
-        if (res.success && res.data) {
-          setBatchResult(res.data);
-        } else {
-          setError(res.error || "Batch analysis failed");
-        }
+        const res = await actionVerifyBatch(emails);
+        if (res.success) setBatchResult(res.data);
+        else setError(res.error);
         setLoading(false);
       },
       error: (err) => {
@@ -78,46 +98,37 @@ export default function AnalysisTool() {
     });
   };
 
-  const downloadResults = (
-    filter: "all" | "safe" | "risky" | "dangerous" = "all",
-  ) => {
+  const downloadResults = (filter: Verdict | "all" = "all") => {
     if (!batchResult) return;
 
-    let filteredEmails = batchResult.emails;
-    if (filter !== "all") {
-      filteredEmails = batchResult.emails.filter((e) => {
-        const domainInfo = batchResult.details.find(
-          (d) => d.domain === e.domain,
-        );
-        return domainInfo?.risk === filter;
-      });
-    }
+    const rows = batchResult.results
+      .filter((r) => filter === "all" || r.verdict === filter)
+      .map((r) => ({
+        Email: r.input,
+        Verdict: r.verdict,
+        Score: r.score,
+        Suggestion: r.suggestion ?? "",
+        Reasons: r.reasons.map((x) => x.code).join(" "),
+        "Role Account": r.checks.roleAccount ? "yes" : "no",
+        Disposable: r.checks.domain?.disposable ? "yes" : "no",
+        "Free Provider": r.checks.domain?.freeProvider ? "yes" : "no",
+        "Catch-all": r.checks.smtp.catchAll === null ? "" : r.checks.smtp.catchAll ? "yes" : "no",
+        "SMTP Status": r.checks.smtp.status,
+      }));
 
-    const csvData = filteredEmails.map((e) => {
-      const domainInfo = batchResult.details.find((d) => d.domain === e.domain);
-      return {
-        Email: e.email,
-        Domain: e.domain,
-        Risk: domainInfo?.risk || "unknown",
-        Score: domainInfo?.analysis.score || 0,
-        "Is Role Based": e.isRoleBased ? "Yes" : "No",
-        "Is Disposable": e.isDisposable ? "Yes" : "No",
-      };
-    });
-
-    const csv = Papa.unparse(csvData);
+    // escapeFormulae: addresses like "=cmd@x.com" are valid but must not run as
+    // spreadsheet formulas when the CSV is opened in Excel.
+    const csv = Papa.unparse(rows, { escapeFormulae: true });
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
     link.setAttribute("href", url);
-    link.setAttribute(
-      "download",
-      `sendgate_${filter}_${new Date().getTime()}.csv`,
-    );
+    link.setAttribute("download", `sendgate_${filter}_${Date.now()}.csv`);
     link.style.visibility = "hidden";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
     setIsModalOpen(false);
   };
 
@@ -175,40 +186,37 @@ export default function AnalysisTool() {
               <div className="mt-8 p-6 bg-base-50 rounded-2xl border border-base-200 space-y-4 animate-in fade-in slide-in-from-top-2">
                 <div className="flex justify-between items-center text-[#1a1c1e]">
                   <span
-                    className={`text-xs font-black uppercase tracking-widest px-3 py-1 rounded-full ${
-                      result.risk === "safe"
-                        ? "bg-green-100 text-green-700"
-                        : result.risk === "risky"
-                          ? "bg-yellow-100 text-yellow-700"
-                          : "bg-red-100 text-red-700"
-                    }`}
+                    className={`text-xs font-black uppercase tracking-widest px-3 py-1 rounded-full ${VERDICT_STYLE[result.verdict].badge}`}
                   >
-                    {result.risk} risk
+                    {VERDICT_STYLE[result.verdict].label}
                   </span>
-                  <span className="text-2xl font-black">
-                    {result.analysis.score} / 100
-                  </span>
+                  <span className="text-2xl font-black">{result.score} / 100</span>
                 </div>
+
+                {result.suggestion && (
+                  <button
+                    type="button"
+                    onClick={() => applySuggestion(result.suggestion!)}
+                    className="w-full text-left text-sm font-bold px-4 py-3 rounded-xl bg-yellow-50 border border-yellow-100 text-yellow-800 hover:bg-yellow-100 transition-colors"
+                  >
+                    Did you mean <span className="underline">{result.suggestion}</span>?
+                  </button>
+                )}
+
                 <div className="space-y-2">
                   <p className="text-xs font-black uppercase tracking-widest opacity-40 text-[#1a1c1e]">
                     Findings
                   </p>
                   <ul className="space-y-1">
-                    {result.analysis.categories.auth.findings
-                      .concat(
-                        result.analysis.categories.infrastructure.findings,
-                        result.analysis.categories.reputation.findings,
-                        result.analysis.categories.behavioral.findings,
-                      )
-                      .map((f: string, i: number) => (
-                        <li
-                          key={i}
-                          className="text-sm font-medium flex items-center gap-2 text-[#44474e]"
-                        >
-                          <div className="w-1.5 h-1.5 rounded-full bg-primary/40" />
-                          {f}
-                        </li>
-                      ))}
+                    {result.reasons.map((r, i) => (
+                      <li
+                        key={i}
+                        className="text-sm font-medium flex items-start gap-2 text-[#44474e]"
+                      >
+                        <div className={`w-1.5 h-1.5 rounded-full mt-2 flex-none ${SEVERITY_DOT[r.severity]}`} />
+                        {r.message}
+                      </li>
+                    ))}
                   </ul>
                 </div>
               </div>
@@ -222,7 +230,7 @@ export default function AnalysisTool() {
                   CSV File (one email per line)
                 </label>
                 <span className="text-[10px] font-bold uppercase tracking-widest opacity-30">
-                  Limit: 100 emails
+                  {limit ? `Limit: ${limit} emails` : ""}
                 </span>
               </div>
               <div className="flex items-center justify-center w-full">
@@ -257,23 +265,21 @@ export default function AnalysisTool() {
 
             {batchResult && (
               <div className="mt-8 space-y-6 animate-in fade-in slide-in-from-top-2">
-                <div className="grid grid-cols-3 gap-4">
-                  <BatchStat
-                    label="Safe"
-                    value={batchResult.segments.safe}
-                    color="bg-green-500"
-                  />
-                  <BatchStat
-                    label="Risky"
-                    value={batchResult.segments.risky}
-                    color="bg-yellow-500"
-                  />
-                  <BatchStat
-                    label="Dangerous"
-                    value={batchResult.segments.dangerous}
-                    color="bg-red-500"
-                  />
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {VERDICTS.map((v) => (
+                    <BatchStat
+                      key={v}
+                      label={VERDICT_STYLE[v].label}
+                      value={batchResult.summary.verdicts[v]}
+                      color={VERDICT_STYLE[v].bar}
+                    />
+                  ))}
                 </div>
+                {(batchResult.summary.duplicates > 0 || batchResult.summary.invalid > 0) && (
+                  <p className="text-xs font-bold text-[#44474e] opacity-70 text-center">
+                    {batchResult.summary.duplicates} duplicates removed · {batchResult.summary.invalid} invalid addresses
+                  </p>
+                )}
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(true)}
@@ -309,46 +315,29 @@ export default function AnalysisTool() {
             <div className="grid grid-cols-1 gap-3">
               <button
                 onClick={() => downloadResults("all")}
-                className="flex items-center justify-between px-6 py-4 bg-base-50 hover:bg-base-100 rounded-2xl border border-base-200 transition-colors group"
+                className="flex items-center justify-between px-6 py-4 bg-base-50 hover:bg-base-100 rounded-2xl border border-base-200 transition-colors"
               >
                 <span className="font-bold text-[#1a1c1e]">All Emails</span>
                 <span className="text-xs font-black opacity-40 uppercase">
-                  {batchResult.totalEmails}
+                  {batchResult.results.length}
                 </span>
               </button>
 
-              <button
-                onClick={() => downloadResults("safe")}
-                disabled={batchResult.segments.safe === 0}
-                className="flex items-center justify-between px-6 py-4 bg-green-50 hover:bg-green-100 rounded-2xl border border-green-100 transition-colors group disabled:opacity-50"
-              >
-                <span className="font-bold text-green-700">Safe Only</span>
-                <span className="text-xs font-black opacity-40 uppercase">
-                  {batchResult.segments.safe}
-                </span>
-              </button>
-
-              <button
-                onClick={() => downloadResults("risky")}
-                disabled={batchResult.segments.risky === 0}
-                className="flex items-center justify-between px-6 py-4 bg-yellow-50 hover:bg-yellow-100 rounded-2xl border border-yellow-100 transition-colors group disabled:opacity-50"
-              >
-                <span className="font-bold text-yellow-700">Risky Only</span>
-                <span className="text-xs font-black opacity-40 uppercase">
-                  {batchResult.segments.risky}
-                </span>
-              </button>
-
-              <button
-                onClick={() => downloadResults("dangerous")}
-                disabled={batchResult.segments.dangerous === 0}
-                className="flex items-center justify-between px-6 py-4 bg-red-50 hover:bg-red-100 rounded-2xl border border-red-100 transition-colors group disabled:opacity-50"
-              >
-                <span className="font-bold text-red-700">Dangerous Only</span>
-                <span className="text-xs font-black opacity-40 uppercase">
-                  {batchResult.segments.dangerous}
-                </span>
-              </button>
+              {VERDICTS.map((v) => (
+                <button
+                  key={v}
+                  onClick={() => downloadResults(v)}
+                  disabled={batchResult.summary.verdicts[v] === 0}
+                  className="flex items-center justify-between px-6 py-4 bg-base-50 hover:bg-base-100 rounded-2xl border border-base-200 transition-colors disabled:opacity-50"
+                >
+                  <span className={`font-bold px-2 py-0.5 rounded-md ${VERDICT_STYLE[v].badge}`}>
+                    {VERDICT_STYLE[v].label} only
+                  </span>
+                  <span className="text-xs font-black opacity-40 uppercase">
+                    {batchResult.summary.verdicts[v]}
+                  </span>
+                </button>
+              ))}
             </div>
 
             <button

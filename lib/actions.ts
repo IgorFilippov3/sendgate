@@ -1,55 +1,56 @@
 "use server";
 
-import { analyzeSingleEmail, analyzeEmailList } from "./analysis-engine";
+import { headers } from "next/headers";
+import { engine } from "./engine";
 import { CONFIG } from "./engine/config";
+import type { BatchResult, EmailVerification } from "./engine/types";
+import { clientKey, rateLimit } from "./server/guard";
 
-/**
- * Server Action: Performs risk analysis for a single email address.
- * 
- * @param email - The raw email address to analyze.
- * @returns Object indicating success/failure and the analysis data or error message.
- */
-export async function actionAnalyzeSingle(email: string) {
+type ActionResult<T> = { success: true; data: T } | { success: false; error: string };
+
+async function guard(): Promise<string | null> {
+  const wait = rateLimit(`web:${clientKey(await headers())}`);
+  return wait > 0 ? `Too many requests. Please wait ${wait}s and try again.` : null;
+}
+
+/** Server Action: verifies a single address for the web UI. */
+export async function actionVerifySingle(email: string): Promise<ActionResult<EmailVerification>> {
+  const limited = await guard();
+  if (limited) return { success: false, error: limited };
+  if (typeof email !== "string" || !email.trim() || email.length > 512) {
+    return { success: false, error: "Please enter an email address." };
+  }
   try {
-    const result = await analyzeSingleEmail(email);
-    return { success: true, data: result };
-  } catch (error: unknown) {
-    const message =
-      error instanceof Error ? error.message : "Failed to analyze email";
-    return {
-      success: false,
-      error: message,
-    };
+    return { success: true, data: await engine().verifier.verifyEmail(email) };
+  } catch (err) {
+    console.error("[action] verify failed", err);
+    return { success: false, error: "Verification failed. Please try again." };
   }
 }
 
-/**
- * Server Action: Performs batch risk analysis for a list of email addresses.
- * 
- * Validates the batch size against CONFIG.maxBulkEmails before processing.
- * 
- * @param emails - Array of raw email strings.
- * @returns Object indicating success/failure and the analysis summary or error message.
- */
-export async function actionAnalyzeBatch(emails: string[]) {
-  try {
-    const limit = CONFIG.maxBulkEmails;
-
-    if (limit && emails.length > limit) {
-      return {
-        success: false,
-        error: `Batch size exceeded. Max allowed is ${limit} emails per analysis.`,
-      };
-    }
-
-    const summary = await analyzeEmailList(emails);
-    return { success: true, data: summary };
-  } catch (error: unknown) {
-    const message =
-      error instanceof Error ? error.message : "Failed to analyze list";
+/** Server Action: verifies a list of addresses for the web UI. */
+export async function actionVerifyBatch(emails: string[]): Promise<ActionResult<BatchResult>> {
+  const limited = await guard();
+  if (limited) return { success: false, error: limited };
+  if (!Array.isArray(emails) || emails.length === 0) {
+    return { success: false, error: "No emails found in the file." };
+  }
+  if (emails.length > CONFIG.maxBulkEmails) {
     return {
       success: false,
-      error: message,
+      error: `This instance accepts at most ${CONFIG.maxBulkEmails} emails per list.`,
     };
   }
+  try {
+    const input = emails.filter((e) => typeof e === "string").map((e) => e.slice(0, 512));
+    return { success: true, data: await engine().verifier.verifyMany(input) };
+  } catch (err) {
+    console.error("[action] batch failed", err);
+    return { success: false, error: "Verification failed. Please try again." };
+  }
+}
+
+/** Limits shown in the UI. */
+export async function actionLimits() {
+  return { maxBulkEmails: CONFIG.maxBulkEmails, maxFileSizeMb: CONFIG.maxFileSizeMb };
 }
