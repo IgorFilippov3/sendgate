@@ -1,64 +1,133 @@
 /**
- * SendGate Configuration Utility
- * Handles environment variables with default fallbacks for self-hosted instances.
+ * SendGate configuration.
+ *
+ * Every value can be overridden with an environment variable. Invalid values
+ * fall back to the default instead of producing NaN.
  */
-export const CONFIG = {
-  /** Maximum number of emails allowed in a single bulk analysis request */
-  maxBulkEmails: Number(process.env.MAX_BULK_EMAILS) || 100,
-  /** Maximum allowed file size for CSV uploads in megabytes */
-  maxFileSizeMb: Number(process.env.MAX_FILE_SIZE_MB) || 5,
 
-  /** Current application version */
-  appVersion: process.env.APP_VERSION || "0.1.0",
-  /** Base URL for the application, used for metadata and absolute links */
-  appBaseUrl:
-    process.env.APP_BASE_URL ||
-    process.env.NEXT_PUBLIC_APP_URL ||
-    "http://localhost:3000",
-  /** List of DNS servers to use for infrastructure lookups */
-  dnsServers: process.env.DNS_SERVERS
-    ? process.env.DNS_SERVERS.split(",")
-    : ["8.8.8.8", "1.1.1.1", "9.9.9.9"],
-  /** Timeout in milliseconds for DNS queries */
-  dnsTimeout: Number(process.env.DNS_TIMEOUT) || 2500,
-  /** Number of retries for failed DNS queries */
-  dnsRetries: Number(process.env.DNS_RETRIES) || 2,
+type Env = Record<string, string | undefined>;
 
-  /** Minimum age of a domain in days to be considered established */
-  domainAgeThresholdDays: Number(process.env.DOMAIN_AGE_THRESHOLD_DAYS) || 30,
-  /** Timeout in milliseconds for RDAP (domain age) lookups */
-  rdapTimeout: Number(process.env.RDAP_TIMEOUT) || 3000,
+function num(env: Env, key: string, fallback: number, min = 0): number {
+  const raw = env[key];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= min ? value : fallback;
+}
 
-  /** Weight of authentication (SPF/DMARC) in the total score (0.0 to 1.0) */
-  weightAuth: Number(process.env.WEIGHT_AUTH) || 0.3,
-  /** Weight of infrastructure (MX/TLS) in the total score (0.0 to 1.0) */
-  weightInfra: Number(process.env.WEIGHT_INFRA) || 0.2,
-  /** Weight of reputation (Blacklists/Age) in the total score (0.0 to 1.0) */
-  weightRep: Number(process.env.WEIGHT_REP) || 0.2,
-  /** Weight of behavioral heuristics in the total score (0.0 to 1.0) */
-  weightBeh: Number(process.env.WEIGHT_BEH) || 0.3,
+function bool(env: Env, key: string, fallback: boolean): boolean {
+  const raw = env[key]?.trim().toLowerCase();
+  if (!raw) return fallback;
+  if (["1", "true", "yes", "on"].includes(raw)) return true;
+  if (["0", "false", "no", "off"].includes(raw)) return false;
+  return fallback;
+}
 
-  /** Score above which an email is considered 'safe' */
-  scoreThresholdSafe: Number(process.env.SCORE_THRESHOLD_SAFE) || 90,
-  /** Score above which an email is considered 'risky' but not yet dangerous */
-  scoreThresholdRisky: Number(process.env.SCORE_THRESHOLD_RISKY) || 75,
-  /** Score above which an email is considered 'dangerous' */
-  scoreThresholdDangerous: Number(process.env.SCORE_THRESHOLD_DANGEROUS) || 60,
-  /** Score below which an email is considered in 'critical' condition */
-  scoreThresholdCritical: Number(process.env.SCORE_THRESHOLD_CRITICAL) || 40,
-  /** Minimum category score before applying a global penalty to the total score */
-  penaltyThreshold: Number(process.env.PENALTY_THRESHOLD) || 50,
+function list(env: Env, key: string, fallback: string[]): string[] {
+  const raw = env[key];
+  if (raw === undefined) return fallback;
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
-  /** Whether to automatically fetch updated disposable domain lists */
-  disposableAutoUpdate: process.env.DISPOSABLE_AUTO_UPDATE !== "false",
-  /** Interval in hours for updating the disposable domains list */
-  disposableUpdateIntervalHours:
-    Number(process.env.DISPOSABLE_UPDATE_INTERVAL_HOURS) || 24,
-  /** Remote URL for the disposable domains blocklist */
-  disposableSourceUrl:
-    process.env.DISPOSABLE_SOURCE_URL ||
-    "https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/main/disposable_email_blocklist.conf",
+function str(env: Env, key: string, fallback: string): string {
+  const raw = env[key]?.trim();
+  return raw ? raw : fallback;
+}
 
-  /** Secret key for REST API authentication */
-  apiKey: process.env.SENDGATE_API_KEY || null,
-};
+export function loadConfig(env: Env = process.env) {
+  const smtpHeloName = str(env, "SMTP_HELO_NAME", "");
+  const spamhausKey = env.SPAMHAUS_DQS_KEY?.trim() || "";
+
+  return {
+    // --- App ---
+    appVersion: str(env, "APP_VERSION", "0.2.0"),
+    appBaseUrl: str(
+      env,
+      "APP_BASE_URL",
+      str(env, "NEXT_PUBLIC_APP_URL", "http://localhost:3000"),
+    ),
+    apiKey: env.SENDGATE_API_KEY?.trim() || null,
+
+    // --- Limits ---
+    maxBulkEmails: num(env, "MAX_BULK_EMAILS", 100, 1),
+    maxFileSizeMb: num(env, "MAX_FILE_SIZE_MB", 5, 0.1),
+    /** Requests per minute per client IP for the web UI and API. 0 disables. */
+    rateLimitPerMinute: num(env, "RATE_LIMIT_PER_MINUTE", 30),
+    /** Max domains analysed in parallel within one batch. */
+    domainConcurrency: num(env, "DOMAIN_CONCURRENCY", 8, 1),
+
+    // --- DNS ---
+    /** Empty list = use the system resolver. */
+    dnsServers: list(env, "DNS_SERVERS", []),
+    dnsTimeoutMs: num(env, "DNS_TIMEOUT", 2500, 100),
+    dnsTries: num(env, "DNS_RETRIES", 2, 0) + 1,
+
+    // --- Cache ---
+    /** TTL for cached per-domain results, seconds. 0 disables the cache. */
+    domainCacheTtlSec: num(env, "DOMAIN_CACHE_TTL", 900),
+    domainCacheSize: num(env, "DOMAIN_CACHE_SIZE", 5000, 1),
+
+    // --- SMTP mailbox verification ---
+    smtpProbeEnabled: bool(env, "SMTP_PROBE_ENABLED", false) && !!smtpHeloName,
+    smtpProbeRequested: bool(env, "SMTP_PROBE_ENABLED", false),
+    /** Hostname used in EHLO. Must resolve to this server and match its PTR. */
+    smtpHeloName,
+    /** Envelope sender used in MAIL FROM. Defaults to verify@<helo name>. */
+    smtpMailFrom: str(
+      env,
+      "SMTP_MAIL_FROM",
+      smtpHeloName ? `verify@${smtpHeloName}` : "",
+    ),
+    smtpPort: num(env, "SMTP_PORT", 25, 1),
+    smtpConnectTimeoutMs: num(env, "SMTP_CONNECT_TIMEOUT", 8000, 500),
+    smtpCommandTimeoutMs: num(env, "SMTP_COMMAND_TIMEOUT", 10000, 500),
+    /** Max simultaneous SMTP sessions for the whole process. */
+    smtpConcurrency: num(env, "SMTP_CONCURRENCY", 5, 1),
+    /** Max RCPT commands sent in a single SMTP session. */
+    smtpMaxRcptPerSession: num(env, "SMTP_MAX_RCPT_PER_SESSION", 20, 1),
+    /** Try STARTTLS when the server offers it. */
+    smtpUseStartTls: bool(env, "SMTP_STARTTLS", true),
+
+    // --- Disposable domains ---
+    disposableAutoUpdate: bool(env, "DISPOSABLE_AUTO_UPDATE", true),
+    disposableUpdateIntervalHours: num(
+      env,
+      "DISPOSABLE_UPDATE_INTERVAL_HOURS",
+      24,
+      1,
+    ),
+    disposableSourceUrl: str(
+      env,
+      "DISPOSABLE_SOURCE_URL",
+      "https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/main/disposable_email_blocklist.conf",
+    ),
+
+    // --- Reputation ---
+    /**
+     * DNS blocklists for domains. Spamhaus public mirrors refuse queries that
+     * come through big public resolvers (8.8.8.8, 1.1.1.1); set
+     * SPAMHAUS_DQS_KEY to use the free Data Query Service instead.
+     */
+    domainBlocklists: list(
+      env,
+      "DOMAIN_BLOCKLISTS",
+      spamhausKey ? [`${spamhausKey}.dbl.dq.spamhaus.net`] : ["dbl.spamhaus.org"],
+    ),
+    ipBlocklists: list(
+      env,
+      "IP_BLOCKLISTS",
+      spamhausKey
+        ? [`${spamhausKey}.zen.dq.spamhaus.net`, "bl.spamcop.net"]
+        : ["zen.spamhaus.org", "bl.spamcop.net"],
+    ),
+    domainAgeThresholdDays: num(env, "DOMAIN_AGE_THRESHOLD_DAYS", 30),
+    rdapEnabled: bool(env, "RDAP_ENABLED", true),
+    rdapTimeoutMs: num(env, "RDAP_TIMEOUT", 3000, 100),
+  };
+}
+
+export type Config = ReturnType<typeof loadConfig>;
+
+export const CONFIG: Config = loadConfig();
